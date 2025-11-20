@@ -51,6 +51,7 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
 - User: "propose: add user authentication"
 - Hook injects context to run `/openspec:proposal` slash command
 - Claude creates change in `openspec/changes/add-user-authentication/`
+- Creates empty `WORKLOG.md` in change directory
 - Stays in discussion mode
 
 **Phase 3: Implementation** (Triggered by `"apply:"` or `"init:"`)
@@ -59,7 +60,20 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
 - Hook confirms branch name (`feature/add-user-authentication`), creates branch, locks plan
 - Claude can now implement
 
-**Phase 4: Archive** (Triggered by `"archive"`)
+**Phase 4: Checkpoint** (Triggered by `"pause:"`)
+- User: "pause: checkpoint current progress"
+- Runs worklog generator agent to preserve context
+- Creates/updates `openspec/changes/[id]/WORKLOG.md` with session summary
+- Updates `tasks.md` with progress notes
+- Stays in implementation mode (doesn't exit or archive)
+- Useful when: switching tasks, context filling up, or stopping mid-work
+
+**Phase 5: Archive** (Triggered by `"archive"` or `"archive --skip-review"`)
+- **Review Gate** (unless `--skip-review` specified):
+  1. Runs code review agent to check quality, patterns, potential bugs
+  2. Runs documentation agent to verify README, docs, comments are updated
+  3. **Runs worklog agent to create final session summary**
+  4. Shows findings to user with options: "Fix now", "Archive anyway", "Create follow-up"
 - Runs `openspec archive <change-id> --yes` to update specs and move to archive/
 - Merges branch, deletes it
 - Returns to discussion mode
@@ -109,6 +123,21 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
    - Git tracking (ahead/behind)
    - Adapted from cc-sessions statusline
 
+7. **`review_agents.js`** (~250 lines)
+   - Code review agent invocation
+   - Documentation review agent invocation
+   - **Worklog agent invocation**
+   - Results aggregation and formatting
+   - User choice handling (fix/archive/follow-up)
+
+8. **`worklog_generator.js`** (~200 lines)
+   - Transcript reading and parsing
+   - Extract accomplishments, decisions, discoveries
+   - Extract problems/solutions and next steps
+   - Generate timestamped WORKLOG.md entries
+   - Update tasks.md with progress notes
+   - Structured output format
+
 **Setup Module (`src/cli/setup-claude-hooks.ts`):**
 
 ```typescript
@@ -151,7 +180,8 @@ export async function setupClaudeHooks(options: ClaudeHookOptions): Promise<void
     active_changes: [],  // Array of { changeId, branch, tasks_md_hash, proposal_md_hash, approved_todos }
     proposal_keywords: ['propose'],
     implementation_keywords: ['apply', 'init'],
-    archive_keywords: ['archive', 'done', 'cancel']
+    archive_keywords: ['archive', 'done', 'cancel'],
+    review_agents_enabled: true  // Run code review and doc review before archive
   };
 
   await FileSystemUtils.writeFile(
@@ -210,11 +240,15 @@ function generateClaudeSettings(isWindows: boolean, includeStatusline: boolean) 
 }
 ```
 
+**Change Files:**
+
+9. `openspec/changes/[id]/WORKLOG.md` (session summaries, committed)
+
 **State & Config:**
 
-7. `openspec/state/openspec-state.json` (runtime, gitignored)
-8. `.claude/settings.json` (local config, gitignored)
-9. `.claude/settings.json.example` (template, committed)
+10. `openspec/state/openspec-state.json` (runtime, gitignored)
+11. `.claude/settings.json` (local config, gitignored)
+12. `.claude/settings.json.example` (template, committed)
 
 ### MODIFIED Files:
 
@@ -549,7 +583,33 @@ Claude: "I apologize for expanding scope. I'll continue with the original 5-todo
 
 User: "archive"
 
-Hook: Running OpenSpec archive process...
+Hook: Running review agents before archive...
+
+      🔍 Code Review Agent
+      ✓ Code quality: Good
+      ✓ Patterns followed: OpenSpec conventions
+      ⚠️ Test coverage: 73% (target: 80%)
+      ℹ️  Suggestion: Add tests for error cases in JWT validation
+
+      📚 Documentation Agent
+      ✓ README updated with authentication setup
+      ✓ API docs updated with new endpoints
+      ⚠️ Missing: CHANGELOG entry for breaking changes
+      ℹ️  Suggestion: Add authentication migration guide
+
+      Review complete. Issues found:
+      - Test coverage below target
+      - Missing CHANGELOG entry
+
+      ? How would you like to proceed?
+        > Archive anyway (issues noted)
+          Fix issues now
+          Create follow-up change for fixes
+
+User: [Selects "Archive anyway (issues noted)"]
+
+Hook: User chose to archive with noted issues.
+      Running OpenSpec archive process...
       $ openspec archive add-jwt-authentication --yes
 
       ✓ Moved changes/add-jwt-authentication → changes/archive/2025-01-20-add-jwt-authentication
@@ -558,7 +618,93 @@ Hook: Running OpenSpec archive process...
       ✓ Deleted feature branch
       ✓ Returned to discussion mode
 
+      📝 Review notes saved to changes/archive/2025-01-20-add-jwt-authentication/.review-notes.md
+
 Statusline: 💬 OpenSpec | Mode: Discussion [main]
+```
+
+## Workflow Example: Using Pause for Context Preservation
+
+```
+# Mid-implementation, user needs to switch tasks
+
+Statusline: 📝 OpenSpec | Change: add-jwt-authentication [feature/add-jwt-authentication] | Implementation (3/5)
+
+Claude: [Just finished implementing refresh token logic]
+
+User: "pause: switching to production hotfix, will resume tomorrow"
+
+Hook: Running worklog generator...
+
+      ✓ Analyzed 45 messages and 12 tool calls
+      ✓ Extracted 3 accomplishments, 2 decisions, 1 discovery
+      ✓ Updated openspec/changes/add-jwt-authentication/WORKLOG.md
+      ✓ Updated tasks.md with progress notes
+
+      📝 Worklog Summary:
+      - Accomplishments: 3 items logged
+      - Decisions: 2 items logged
+      - Discoveries: 1 item logged
+      - Next Steps: 2 items logged
+
+      You can resume this change anytime with:
+      "apply: add-jwt-authentication"
+
+# Next day, user resumes work
+
+User: [Opens new Claude Code session]
+
+Hook: [SessionStart] Loading active change: add-jwt-authentication
+
+      📋 Change: add-jwt-authentication
+      Branch: feature/add-jwt-authentication
+      Progress: 3/5 tasks complete
+
+      📝 Recent Work (from WORKLOG.md):
+
+      2025-01-20 14:30:
+      ✓ Implemented JWT middleware and refresh token logic
+      ✓ Created auth endpoints
+      → Next: Add comprehensive tests for error cases
+
+Claude: "Welcome back! You're working on add-jwt-authentication. Based on your worklog, you've completed the JWT middleware and refresh token logic. The next step is to add comprehensive tests for error cases. Should I proceed with that?"
+
+User: "Yes, continue with the tests"
+
+Claude: [Resumes with full context from WORKLOG.md and tasks.md]
+```
+
+## Workflow Example: Context Window Filling Up
+
+```
+Statusline: 📝 OpenSpec | Change: refactor-api-layer [feature/refactor-api] | Implementation (4/8)
+Context: 92% full
+
+Claude: "I notice our context window is at 92%. Would you like me to create a checkpoint before we continue? This will preserve all our work so we can start fresh."
+
+User: "pause: before refactoring controller layer"
+
+Hook: Running worklog generator...
+
+      ✓ Worklog updated with 8 accomplishments
+      ✓ Captured 4 architectural decisions
+      ✓ Documented 3 discovered patterns
+      ✓ Logged 2 problems and their solutions
+
+      Context preserved! You can:
+      - Continue in this session (context will be high)
+      - Start a new session with "apply: refactor-api-layer"
+        (WORKLOG.md will provide full context)
+
+User: "/clear"
+
+[New session starts]
+
+User: "apply: refactor-api-layer"
+
+Hook: [Loads change with complete WORKLOG.md context]
+
+Claude: "Resuming refactor-api-layer. Based on your worklog, you've completed service layer refactoring and are ready to tackle the controller layer. The previous session identified that controllers have mixed concerns - I'll address that now."
 ```
 
 ## Key Features
@@ -590,6 +736,13 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 - Shows mode, proposal, branch, todo progress
 - Git ahead/behind indicators
 - Adapted from cc-sessions
+
+✅ **Pre-Archive Review:**
+- Code review agent checks quality, patterns, bugs
+- Documentation agent verifies docs updated
+- User can fix issues, archive anyway, or create follow-up
+- Skip with `archive --skip-review`
+- Review notes saved with archived changes
 
 ## State Machine
 
@@ -634,7 +787,10 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 **Keyword Detection:**
 - `propose: [description]` → Inject context to trigger `/openspec:proposal` with description
 - `apply: [change-id]` or `init: [change-id]` → Inject context to trigger `/openspec:apply [change-id]`
-- `archive` / `done` / `cancel` → Inject context to trigger archive workflow
+- `pause:` or `pause: [note]` → Inject context to trigger worklog generation
+- `archive` → Inject context to trigger archive workflow WITH review agents
+- `archive --skip-review` → Inject context to trigger archive workflow WITHOUT review agents
+- `done` / `cancel` → Alias for `archive`
 
 **Change Lookup:**
 - Scan `openspec/changes/` directory for matching change ID
@@ -673,6 +829,7 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 
 **Context Display:**
 - If active change: Show change ID, branch, progress
+- **Display recent worklog entries (last 3-5 items) from WORKLOG.md**
 - If discussion mode: List available changes in `openspec/changes/`
 - Show status of each change (not started, in progress, complete)
 
@@ -691,6 +848,153 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 [Mode] | [Edited Files] | [Open Changes] | [Git Branch + Upstream]
 ```
 
+### `worklog_generator.js` (Worklog Agent)
+
+**Purpose:**
+Create detailed session summaries that preserve context across sessions and enable seamless task resumption.
+
+**Trigger Points:**
+1. Manual: User says `pause:` or `pause: [note]`
+2. Automatic: During archive review process (before showing review results)
+
+**Process:**
+
+1. **Read Conversation Transcript:**
+   - Access full conversation history from current session
+   - Parse messages, tool calls, and results
+   - Identify significant events and changes
+
+2. **Extract Key Information:**
+   - **Accomplishments**: What was implemented or completed
+     - Code files created/modified
+     - Features added
+     - Bugs fixed
+   - **Decisions**: Technical choices made and rationale
+     - Architecture decisions
+     - Library/framework selections
+     - Pattern choices
+   - **Discoveries**: New information learned about the codebase
+     - Hidden dependencies
+     - Gotchas and edge cases
+     - Existing patterns discovered
+   - **Problems & Solutions**: Issues encountered and how they were resolved
+     - Errors and their fixes
+     - Blockers and workarounds
+     - Testing challenges
+   - **Next Steps**: What remains to be done
+     - Uncompleted tasks
+     - Follow-up items
+     - Technical debt identified
+
+3. **Generate WORKLOG Entry:**
+   - Create timestamped section in `openspec/changes/[id]/WORKLOG.md`
+   - Use structured markdown format (see below)
+   - Include user note if provided (from `pause: [note]`)
+
+4. **Update tasks.md:**
+   - Add progress notes to relevant tasks
+   - Update checkbox status if tasks completed
+   - Add discovered subtasks if needed
+
+**WORKLOG.md Format:**
+
+```markdown
+# Work Log: [change-id]
+
+## 2025-01-20 14:30
+
+### Accomplishments
+- Implemented JWT middleware in `src/auth/jwt.ts`
+- Added refresh token logic with 7-day expiry
+- Created auth endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`
+
+### Decisions
+- **Using RS256 instead of HS256**: Better security with asymmetric keys, allows public verification
+- **Refresh token rotation**: Each refresh generates new token, invalidates old one
+- **Token storage**: HttpOnly cookies for web, Authorization header for API
+
+### Discoveries
+- Auth module has hidden dependency on session store in `src/session/store.ts`
+- Existing rate limiter must be configured per endpoint (not global)
+- User model already has `lastLogin` field we can populate
+
+### Problems & Solutions
+- **Problem**: Token expiry wasn't respecting timezone
+  - **Solution**: Switched to UTC timestamps throughout, convert to local only for display
+- **Problem**: Middleware order caused session conflicts
+  - **Solution**: Moved JWT middleware before session middleware in `app.ts:45`
+
+### Next Steps
+- Add comprehensive tests for error cases (invalid tokens, expired, malformed)
+- Update API documentation with authentication flow diagrams
+- Add rate limiting to refresh endpoint to prevent abuse
+
+---
+
+## 2025-01-21 09:15
+
+[Next session entry...]
+```
+
+**Output:**
+- Returns success/failure status
+- Includes path to updated WORKLOG.md
+- Shows summary of extracted items (e.g., "Logged 5 accomplishments, 3 decisions, 2 discoveries")
+
+**Error Handling:**
+- Gracefully handle missing transcript
+- Create WORKLOG.md if doesn't exist
+- Append to existing log (never overwrite)
+- Validate markdown formatting
+
+### `review_agents.js` (Review Orchestration)
+
+**Archive Review Workflow:**
+When `archive` keyword detected (without `--skip-review` flag):
+
+1. **Detect Changed Files:**
+   - Run `git diff main..HEAD --name-only` to get all changed files
+   - Categorize: code files, doc files, test files, config files
+
+2. **Worklog Agent:**
+   - Call `worklog_generator.js` to create final session summary
+   - Updates `WORKLOG.md` with complete archive context
+   - Returns worklog path and summary
+
+3. **Code Review Agent:**
+   - Use Task tool with `code-reviewer` agent type
+   - Prompt: "Review the following code changes for quality, patterns, potential bugs, and test coverage"
+   - Pass changed code files
+   - Parse output for: ✓ passed checks, ⚠️ warnings, ℹ️ suggestions
+
+4. **Documentation Agent:**
+   - Use Task tool with specialized documentation review agent
+   - Prompt: "Review if documentation is updated: README, CHANGELOG, API docs, comments"
+   - Pass changed files and check for corresponding doc updates
+   - Parse output for: ✓ updated docs, ⚠️ missing updates, ℹ️ suggestions
+
+5. **Aggregate Results:**
+   - Combine findings from both agents
+   - Format output with emoji indicators
+   - Count: passed, warnings, suggestions
+
+6. **User Decision:**
+   - If all ✓ (no warnings): Proceed to archive automatically
+   - If warnings found: Use AskUserQuestion tool with options:
+     - "Archive anyway (issues noted)" → Save .review-notes.md and proceed
+     - "Fix issues now" → Return to implementation mode, keep change active
+     - "Create follow-up change" → Archive this, create new change for fixes
+
+7. **Save Review Notes:**
+   - If archived with warnings, create `.review-notes.md` in archived change directory
+   - Contains full agent reports (code review, docs review, worklog summary) for future reference
+   - WORKLOG.md is always moved to archive with the change
+
+**Skip Review:**
+When `archive --skip-review` detected:
+- Skip steps 1-6 entirely
+- Proceed directly to archive workflow
+
 ### `shared_state.js` (Utility Module)
 
 **State Operations:**
@@ -702,6 +1006,7 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 - Create branch: `git checkout -b feature/[change-id]`
 - Merge branch: `git checkout main && git merge feature/[change-id]`
 - Delete branch: `git branch -d feature/[change-id]`
+- Get changed files: `git diff main..HEAD --name-only`
 
 **Change File Operations:**
 - Find change in `openspec/changes/[id]/`
@@ -714,8 +1019,11 @@ Statusline: 💬 OpenSpec | Mode: Discussion [main]
 - Compare TodoWrite against tasks.md tasks
 
 **Archive Workflow:**
+- Call review_agents.js if review enabled
+- Handle user decision from review
 - Run: `openspec archive [change-id] --yes` via Bash
 - Verify command success
+- Save review notes if applicable
 - Update state to remove completed change
 - Clean up git branch
 
@@ -946,14 +1254,25 @@ Based on user selections, the following design choices were made:
       "branch": "feature/add-jwt-authentication",
       "tasks_md_hash": "abc123...",
       "proposal_md_hash": "def456...",
-      "approved_todos": [...]
+      "approved_todos": [...],
+      "last_worklog_update": "2025-01-20T14:30:00Z",
+      "worklog_entries": 3
     }
   ],
   "proposal_keywords": ["propose"],
   "implementation_keywords": ["apply", "init"],
-  "archive_keywords": ["archive", "done", "cancel"]
+  "pause_keywords": ["pause"],
+  "archive_keywords": ["archive", "done", "cancel"],
+  "review_agents_enabled": true,
+  "worklog_enabled": true
 }
 ```
+
+**Notes**:
+- `review_agents_enabled` controls whether code review and documentation agents run before archive. Can be bypassed per-archive with `archive --skip-review`.
+- `worklog_enabled` controls whether worklog generation runs. If disabled, `pause:` keyword is ignored.
+- `last_worklog_update` tracks when worklog was last generated (useful for session resumption)
+- `worklog_entries` counts total entries in WORKLOG.md (displayed in statusline)
 
 ### Terminology Updates:
 
@@ -1199,7 +1518,7 @@ These enhancements could be added in future iterations:
 
 ## Implementation Phases
 
-### Phase 1: Core Hook Scripts (Week 1)
+### Phase 1: Core Hook Scripts (Week 1-2)
 
 **Files to Create:**
 1. `openspec/hooks/shared_state.js`
@@ -1215,7 +1534,7 @@ These enhancements could be added in future iterations:
    - Branch validation
 
 3. `openspec/hooks/user_messages.js`
-   - Keyword detection
+   - Keyword detection (including --skip-review flag)
    - Slash command context injection
    - Change lookup
    - Branch name generation
@@ -1233,11 +1552,20 @@ These enhancements could be added in future iterations:
    - Information gathering
    - Formatting and display
 
+7. `openspec/hooks/review_agents.js`
+   - Code review agent invocation
+   - Documentation agent invocation
+   - Results aggregation
+   - User decision handling
+   - Review notes generation
+
 **Testing:**
 - Unit test each hook independently
 - Mock state file operations
 - Test git operations (create, merge, delete branches)
 - Test tasks.md parsing
+- Test review agent invocations with mock responses
+- Test user decision flow (fix/archive/follow-up)
 
 ### Phase 2: CLI Integration (Week 2)
 
@@ -1287,16 +1615,27 @@ These enhancements could be added in future iterations:
 
 5. **Archive Process:**
    - Complete all tasks
-   - Run archive
+   - Run archive (triggers review agents)
+   - Verify code review agent runs
+   - Verify documentation agent runs
+   - Test user choices: fix, archive anyway, create follow-up
+   - Verify .review-notes.md created when archiving with issues
    - Verify `openspec archive` command executed
    - Verify change moved to archive/
    - Verify specs updated (if applicable)
 
-6. **Error Handling:**
+6. **Archive Skip Review:**
+   - Run `archive --skip-review`
+   - Verify review agents NOT invoked
+   - Verify archive proceeds immediately
+   - No review notes created
+
+7. **Error Handling:**
    - Missing change files
    - Git command failures
    - Malformed tasks.md
    - No remote tracking
+   - Review agent errors
 
 ### Phase 4: Documentation & Polish (Week 4)
 
@@ -1343,6 +1682,23 @@ The implementation will be considered successful when:
 - Git tracking (ahead/behind) works
 - Open changes count correct
 
+✅ **Review Agents:**
+- Code review agent runs before archive
+- Documentation agent runs before archive
+- **Worklog agent runs before archive**
+- User can choose to fix, archive anyway, or create follow-up
+- `archive --skip-review` bypasses review
+- Review notes saved to `.review-notes.md` when issues found
+
+✅ **Worklog/Pause Features:**
+- `pause:` keyword triggers worklog generation
+- WORKLOG.md created and updated with timestamped entries
+- Extracts accomplishments, decisions, discoveries, problems/solutions, next steps
+- Session start displays recent worklog entries
+- Context preserved across sessions
+- tasks.md updated with progress notes
+- Seamless resumption after context clearing
+
 ✅ **Compatibility:**
 - Existing `/openspec:*` slash commands work
 - `openspec list`, `show`, `validate`, `archive` commands work
@@ -1353,11 +1709,50 @@ The implementation will be considered successful when:
 
 To implement this plan:
 
-1. **Phase 1**: Create hook scripts with revised logic (estimated 1 week)
+1. **Phase 1**: Create hook scripts with revised logic (estimated 1-2 weeks)
+   - Includes review_agents.js for code and documentation review
+   - **Includes worklog_generator.js for session context preservation**
+   - More complex due to agent invocation and user decision handling
+   - Transcript parsing for worklog extraction
 2. **Phase 2**: Integrate into `openspec init` command (estimated 1 week)
-3. **Phase 3**: End-to-end testing (estimated 1 week)
+3. **Phase 3**: End-to-end testing (estimated 1-2 weeks)
+   - Includes testing review agent workflows
+   - **Test worklog generation and context resumption**
+   - Test all user decision paths
+   - Test `pause:` keyword and session restart scenarios
 4. **Phase 4**: Documentation and polish (estimated 1 week)
 
-**Total Estimated Time**: 4 weeks
+**Total Estimated Time**: 4-6 weeks
 
-The plan is now aligned with OpenSpec's conventions, addresses all critical conflicts, incorporates user design decisions, and is ready for implementation.
+The plan is now aligned with OpenSpec's conventions, addresses all critical conflicts, incorporates user design decisions (including pre-archive review agents and worklog/context preservation from cc-sessions), and is ready for implementation.
+
+## Worklog/Pause Feature Summary
+
+Inspired by cc-sessions' approach to context preservation, we're adding:
+
+1. **Automatic Worklog Generation:**
+   - Runs during archive process (with code/doc review)
+   - Can be manually triggered with `pause:` keyword
+   - Reads full conversation transcript
+   - Extracts structured information
+
+2. **WORKLOG.md Structure:**
+   - Lives in each change directory: `openspec/changes/[id]/WORKLOG.md`
+   - Timestamped sections with accomplishments, decisions, discoveries
+   - Problems/solutions and next steps for easy resumption
+   - Moved to archive with the change
+
+3. **Context Preservation:**
+   - Session start hook displays recent worklog entries
+   - Enables seamless resumption across sessions
+   - Solves context window filling up problem
+   - Maintains project knowledge even after `/clear`
+
+4. **Integration Points:**
+   - `user_messages.js`: Detects `pause:` keyword
+   - `worklog_generator.js`: New specialized agent (~200 lines)
+   - `review_agents.js`: Calls worklog before showing review results
+   - `session_start.js`: Displays worklog summary on resume
+   - State tracking: `last_worklog_update`, `worklog_entries` fields
+
+This ensures no context is lost when switching tasks, hitting token limits, or archiving changes.
