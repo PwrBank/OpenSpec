@@ -51,7 +51,7 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
 - User: "propose: add user authentication"
 - Hook injects context to run `/openspec:proposal` slash command
 - Claude creates change in `openspec/changes/add-user-authentication/`
-- Creates empty `WORKLOG.md` in change directory
+- Creates empty `worklog.md` in change directory
 - Stays in discussion mode
 
 **Phase 3: Implementation** (Triggered by `"apply:"` or `"init:"`)
@@ -63,7 +63,7 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
 **Phase 4: Checkpoint** (Triggered by `"pause:"`)
 - User: "pause: checkpoint current progress"
 - Runs worklog generator agent to preserve context
-- Creates/updates `openspec/changes/[id]/WORKLOG.md` with session summary
+- Creates/updates `openspec/changes/[id]/worklog.md` with session summary
 - Updates `tasks.md` with progress notes
 - Stays in implementation mode (doesn't exit or archive)
 - Useful when: switching tasks, context filling up, or stopping mid-work
@@ -137,6 +137,29 @@ Add approval-based hooks from cc-sessions to OpenSpec, fully integrated into the
    - Generate timestamped WORKLOG.md entries
    - Update tasks.md with progress notes
    - Structured output format
+
+**Agent Prompts (`openspec/agents/`):**
+
+9. **`code-review.md`** (~230 lines)
+   - Agent prompt for code quality and security review
+   - Identifies LLM slop, security vulnerabilities, pattern violations
+   - Reviews against proposal.md, tasks.md, spec deltas
+   - Categorized output: Critical 🔴, Warning 🟡, Suggestion 🟢
+   - Invoked by review_agents.js during archive
+
+10. **`documentation.md`** (~120 lines)
+   - Agent prompt for documentation maintenance
+   - Updates proposal.md, tasks.md, README.md, CLAUDE.md
+   - Removes outdated information, adds new patterns
+   - References code by file paths and line numbers
+   - Invoked by review_agents.js during archive
+
+11. **`worklog-generator.md`** (~180 lines)
+   - Agent prompt for session context preservation
+   - Extracts accomplishments, decisions, discoveries from transcript
+   - Generates timestamped worklog.md entries
+   - Updates tasks.md with progress notes
+   - Invoked by user_messages.js (pause:) or review_agents.js (archive)
 
 **Setup Module (`src/cli/setup-claude-hooks.ts`):**
 
@@ -242,13 +265,13 @@ function generateClaudeSettings(isWindows: boolean, includeStatusline: boolean) 
 
 **Change Files:**
 
-9. `openspec/changes/[id]/WORKLOG.md` (session summaries, committed)
+12. `openspec/changes/[id]/worklog.md` (session summaries, committed)
 
 **State & Config:**
 
-10. `openspec/state/openspec-state.json` (runtime, gitignored)
-11. `.claude/settings.json` (local config, gitignored)
-12. `.claude/settings.json.example` (template, committed)
+13. `openspec/state/openspec-state.json` (runtime, gitignored)
+14. `.claude/settings.json` (local config, gitignored)
+15. `.claude/settings.json.example` (template, committed)
 
 ### MODIFIED Files:
 
@@ -638,7 +661,7 @@ Hook: Running worklog generator...
 
       ✓ Analyzed 45 messages and 12 tool calls
       ✓ Extracted 3 accomplishments, 2 decisions, 1 discovery
-      ✓ Updated openspec/changes/add-jwt-authentication/WORKLOG.md
+      ✓ Updated openspec/changes/add-jwt-authentication/worklog.md
       ✓ Updated tasks.md with progress notes
 
       📝 Worklog Summary:
@@ -660,7 +683,7 @@ Hook: [SessionStart] Loading active change: add-jwt-authentication
       Branch: feature/add-jwt-authentication
       Progress: 3/5 tasks complete
 
-      📝 Recent Work (from WORKLOG.md):
+      📝 Recent Work (from worklog.md):
 
       2025-01-20 14:30:
       ✓ Implemented JWT middleware and refresh token logic
@@ -694,7 +717,7 @@ Hook: Running worklog generator...
       Context preserved! You can:
       - Continue in this session (context will be high)
       - Start a new session with "apply: refactor-api-layer"
-        (WORKLOG.md will provide full context)
+        (worklog.md will provide full context)
 
 User: "/clear"
 
@@ -702,7 +725,7 @@ User: "/clear"
 
 User: "apply: refactor-api-layer"
 
-Hook: [Loads change with complete WORKLOG.md context]
+Hook: [Loads change with complete worklog.md context]
 
 Claude: "Resuming refactor-api-layer. Based on your worklog, you've completed service layer refactoring and are ready to tackle the controller layer. The previous session identified that controllers have mixed concerns - I'll address that now."
 ```
@@ -829,7 +852,7 @@ Claude: "Resuming refactor-api-layer. Based on your worklog, you've completed se
 
 **Context Display:**
 - If active change: Show change ID, branch, progress
-- **Display recent worklog entries (last 3-5 items) from WORKLOG.md**
+- **Display recent worklog entries (last 3-5 items) from worklog.md**
 - If discussion mode: List available changes in `openspec/changes/`
 - Show status of each change (not started, in progress, complete)
 
@@ -848,10 +871,12 @@ Claude: "Resuming refactor-api-layer. Based on your worklog, you've completed se
 [Mode] | [Edited Files] | [Open Changes] | [Git Branch + Upstream]
 ```
 
-### `worklog_generator.js` (Worklog Agent)
+### `worklog_generator.js` (Worklog Agent Invocation)
 
 **Purpose:**
-Create detailed session summaries that preserve context across sessions and enable seamless task resumption.
+Invoke the worklog generator agent to preserve session context.
+
+**Agent Location:** `openspec/agents/worklog-generator.md`
 
 **Trigger Points:**
 1. Manual: User says `pause:` or `pause: [note]`
@@ -859,12 +884,14 @@ Create detailed session summaries that preserve context across sessions and enab
 
 **Process:**
 
-1. **Read Conversation Transcript:**
-   - Access full conversation history from current session
-   - Parse messages, tool calls, and results
-   - Identify significant events and changes
+1. **Prepare Agent Input:**
+   - Change ID
+   - Change directory path
+   - User note (if provided from pause: command)
 
-2. **Extract Key Information:**
+2. **Invoke Agent:**
+   - Call agent with conversation transcript access
+   - Agent extracts key information:
    - **Accomplishments**: What was implemented or completed
      - Code files created/modified
      - Features added
@@ -886,8 +913,8 @@ Create detailed session summaries that preserve context across sessions and enab
      - Follow-up items
      - Technical debt identified
 
-3. **Generate WORKLOG Entry:**
-   - Create timestamped section in `openspec/changes/[id]/WORKLOG.md`
+3. **Generate Worklog Entry:**
+   - Create timestamped section in `openspec/changes/[id]/worklog.md`
    - Use structured markdown format (see below)
    - Include user note if provided (from `pause: [note]`)
 
@@ -896,7 +923,7 @@ Create detailed session summaries that preserve context across sessions and enab
    - Update checkbox status if tasks completed
    - Add discovered subtasks if needed
 
-**WORKLOG.md Format:**
+**worklog.md Format:**
 
 ```markdown
 # Work Log: [change-id]
@@ -938,12 +965,12 @@ Create detailed session summaries that preserve context across sessions and enab
 
 **Output:**
 - Returns success/failure status
-- Includes path to updated WORKLOG.md
+- Includes path to updated worklog.md
 - Shows summary of extracted items (e.g., "Logged 5 accomplishments, 3 decisions, 2 discoveries")
 
 **Error Handling:**
 - Gracefully handle missing transcript
-- Create WORKLOG.md if doesn't exist
+- Create worklog.md if doesn't exist
 - Append to existing log (never overwrite)
 - Validate markdown formatting
 
@@ -957,21 +984,22 @@ When `archive` keyword detected (without `--skip-review` flag):
    - Categorize: code files, doc files, test files, config files
 
 2. **Worklog Agent:**
-   - Call `worklog_generator.js` to create final session summary
-   - Updates `WORKLOG.md` with complete archive context
+   - Invoke agent from `openspec/agents/worklog-generator.md`
+   - Pass change-id and optional note
+   - Agent creates/updates `worklog.md` with session summary
    - Returns worklog path and summary
 
 3. **Code Review Agent:**
-   - Use Task tool with `code-reviewer` agent type
-   - Prompt: "Review the following code changes for quality, patterns, potential bugs, and test coverage"
-   - Pass changed code files
-   - Parse output for: ✓ passed checks, ⚠️ warnings, ℹ️ suggestions
+   - Invoke agent from `openspec/agents/code-review.md`
+   - Pass change-id and changed files list
+   - Agent reviews against proposal.md, tasks.md, spec deltas
+   - Parse output for: 🔴 Critical, 🟡 Warnings, 🟢 Suggestions
 
 4. **Documentation Agent:**
-   - Use Task tool with specialized documentation review agent
-   - Prompt: "Review if documentation is updated: README, CHANGELOG, API docs, comments"
-   - Pass changed files and check for corresponding doc updates
-   - Parse output for: ✓ updated docs, ⚠️ missing updates, ℹ️ suggestions
+   - Invoke agent from `openspec/agents/documentation.md`
+   - Pass change-id
+   - Agent updates proposal.md, tasks.md, README.md, project docs
+   - Returns list of files updated
 
 5. **Aggregate Results:**
    - Combine findings from both agents
@@ -988,7 +1016,7 @@ When `archive` keyword detected (without `--skip-review` flag):
 7. **Save Review Notes:**
    - If archived with warnings, create `.review-notes.md` in archived change directory
    - Contains full agent reports (code review, docs review, worklog summary) for future reference
-   - WORKLOG.md is always moved to archive with the change
+   - worklog.md is always moved to archive with the change
 
 **Skip Review:**
 When `archive --skip-review` detected:
@@ -1272,7 +1300,7 @@ Based on user selections, the following design choices were made:
 - `review_agents_enabled` controls whether code review and documentation agents run before archive. Can be bypassed per-archive with `archive --skip-review`.
 - `worklog_enabled` controls whether worklog generation runs. If disabled, `pause:` keyword is ignored.
 - `last_worklog_update` tracks when worklog was last generated (useful for session resumption)
-- `worklog_entries` counts total entries in WORKLOG.md (displayed in statusline)
+- `worklog_entries` counts total entries in worklog.md (displayed in statusline)
 
 ### Terminology Updates:
 
@@ -1692,7 +1720,7 @@ The implementation will be considered successful when:
 
 ✅ **Worklog/Pause Features:**
 - `pause:` keyword triggers worklog generation
-- WORKLOG.md created and updated with timestamped entries
+- worklog.md created and updated with timestamped entries
 - Extracts accomplishments, decisions, discoveries, problems/solutions, next steps
 - Session start displays recent worklog entries
 - Context preserved across sessions
@@ -1736,8 +1764,8 @@ Inspired by cc-sessions' approach to context preservation, we're adding:
    - Reads full conversation transcript
    - Extracts structured information
 
-2. **WORKLOG.md Structure:**
-   - Lives in each change directory: `openspec/changes/[id]/WORKLOG.md`
+2. **worklog.md Structure:**
+   - Lives in each change directory: `openspec/changes/[id]/worklog.md`
    - Timestamped sections with accomplishments, decisions, discoveries
    - Problems/solutions and next steps for easy resumption
    - Moved to archive with the change
@@ -1750,9 +1778,22 @@ Inspired by cc-sessions' approach to context preservation, we're adding:
 
 4. **Integration Points:**
    - `user_messages.js`: Detects `pause:` keyword
-   - `worklog_generator.js`: New specialized agent (~200 lines)
-   - `review_agents.js`: Calls worklog before showing review results
+   - `worklog_generator.js`: Hook that invokes worklog agent
+   - `openspec/agents/worklog-generator.md`: Agent prompt for context extraction
+   - `openspec/agents/code-review.md`: Agent prompt for code quality review
+   - `openspec/agents/documentation.md`: Agent prompt for doc maintenance
+   - `review_agents.js`: Orchestrates all review agents during archive
    - `session_start.js`: Displays worklog summary on resume
    - State tracking: `last_worklog_update`, `worklog_entries` fields
 
 This ensures no context is lost when switching tasks, hitting token limits, or archiving changes.
+
+## Agent Files
+
+The hook system uses specialized agent prompts stored in `openspec/agents/`:
+
+1. **code-review.md** - Reviews code for quality, security, and pattern adherence
+2. **documentation.md** - Maintains documentation accuracy across the project
+3. **worklog-generator.md** - Preserves session context in worklog.md files
+
+These agents are invoked by the hook scripts during the archive process (or manually for worklog generation). They provide structured, high-quality output that guides the review gate decisions.

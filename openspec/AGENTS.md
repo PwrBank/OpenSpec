@@ -430,6 +430,145 @@ Only add complexity with:
 3. Review recent archives
 4. Ask for clarification
 
+## Slash Commands
+
+OpenSpec provides slash commands for Claude Code to streamline the spec-driven workflow. These commands can be invoked directly or triggered by keywords when using Claude Code hooks.
+
+### /openspec:proposal
+Create a new change proposal with validation.
+
+**Purpose:** Scaffold a new change with proposal.md, tasks.md, design.md (optional), and spec deltas.
+
+**Usage:** `/openspec:proposal` (then follow the prompts)
+
+**Keyword:** `propose: [description]` (when hooks are installed)
+
+**What it does:**
+- Reviews existing specs and changes
+- Chooses a unique change-id
+- Creates proposal structure
+- Drafts spec deltas with requirements and scenarios
+- Validates with `openspec validate --strict`
+
+### /openspec:apply
+Start implementing an approved change.
+
+**Purpose:** Begin implementation of a change that has been reviewed and approved.
+
+**Usage:** `/openspec:apply [change-id]`
+
+**Keywords:** `apply: [change-id]` or `init: [change-id]` (when hooks are installed)
+
+**What it does:**
+- Reads proposal.md, design.md, and tasks.md
+- Works through tasks sequentially
+- Tracks completion in tasks.md checklist
+- Stays focused on approved scope
+
+### /openspec:pause
+Generate worklog and preserve session context for resumption.
+
+**Purpose:** Create a checkpoint of current progress without exiting implementation mode.
+
+**Usage:** `/openspec:pause [optional note]`
+
+**Keyword:** `pause: [optional note]` (when hooks are installed)
+
+**What it does:**
+- Identifies the current active change
+- Runs worklog generator agent
+- Extracts accomplishments, decisions, discoveries, problems/solutions, next steps
+- Creates/updates `openspec/changes/<id>/worklog.md` with timestamped entry
+- Updates tasks.md with progress notes
+- Stays in implementation mode
+
+**Use cases:**
+- Switching to another task temporarily
+- Context window filling up (before `/clear`)
+- Taking a break and want to preserve context
+- End of work session with incomplete tasks
+
+### /openspec:archive
+Complete and archive an implemented change.
+
+**Purpose:** Finalize a change, run quality checks, update specs, and move to archive.
+
+**Usage:** `/openspec:archive [change-id]`
+
+**Keywords:** `archive:`, `done:`, `cancel:` (when hooks are installed)
+
+**Flags:** `--skip-review` to bypass review agents (use keyword: `archive: --skip-review`)
+
+**What it does:**
+1. Identifies the change to archive
+2. If review agents are installed (checks for `openspec/agents/` directory):
+   - Runs code review agent to check quality and security
+   - Runs documentation agent to ensure docs are current
+   - Runs worklog generator for final session summary
+   - Presents findings with options: "Fix now", "Archive anyway", "Create follow-up"
+3. Runs `openspec archive <id> --yes` to move change and update specs
+4. Validates the archived change
+5. Returns to discussion mode (if using hooks)
+
+**Use cases:**
+- Change is complete and tested
+- Ready to deploy and archive the proposal
+- Need quality review before finalizing
+
+### Keyword vs Slash Command
+
+When using Claude Code hooks with OpenSpec:
+
+**Keywords** (detected by hooks):
+- `propose: [description]` - Create proposal
+- `apply: [change-id]` - Start implementation
+- `pause: [note]` - Generate worklog checkpoint
+- `archive:` - Complete and archive change
+- `done:` / `cancel:` - Aliases for archive
+
+**Slash Commands** (explicit invocation):
+- `/openspec:proposal` - Same as `propose:`
+- `/openspec:apply` - Same as `apply:`
+- `/openspec:pause` - Same as `pause:`
+- `/openspec:archive` - Same as `archive:`
+
+**Without hooks:** Use slash commands directly - they work standalone.
+
+**With hooks:** Use either keywords (natural conversation) or slash commands (explicit control).
+
+## Review Agents (Archive Process)
+
+When using Claude Code hooks with OpenSpec, the archive process runs specialized agents for quality assurance.
+
+### Code Review Agent
+**Location:** `openspec/agents/code-review.md`
+**Triggered:** Automatically during `archive:` or `/openspec:archive` (unless `--skip-review` flag)
+**Purpose:** Reviews implementation for quality and security
+- Identifies LLM slop (placeholders, TODOs, redundant code)
+- Finds security vulnerabilities and pattern violations
+- Checks implementation against proposal.md and tasks.md
+- Categorizes: Critical 🔴 (blocks), Warning 🟡 (should fix), Suggestion 🟢 (consider)
+
+### Documentation Agent
+**Location:** `openspec/agents/documentation.md`
+**Triggered:** Automatically during `archive:` or `/openspec:archive`
+**Purpose:** Ensures documentation reflects current implementation
+- Updates proposal.md, tasks.md, spec deltas
+- Maintains project CLAUDE.md and README.md
+- Removes outdated information
+- References code by file paths and line numbers
+
+### Worklog Generator
+**Location:** `openspec/agents/worklog-generator.md`
+**Triggered:** Manual (`pause:` or `/openspec:pause`) or automatic (during archive)
+**Purpose:** Preserves session context across restarts
+- Creates worklog.md with timestamped entries
+- Extracts accomplishments, decisions, discoveries, problems/solutions
+- Enables seamless task resumption after `/clear` or context window filling
+- Updates tasks.md with progress notes
+
+**Note:** These agents are part of the Claude Code hooks system. They run automatically during the archive review gate unless bypassed with `archive: --skip-review`.
+
 ## Quick Reference
 
 ### Stage Indicators
@@ -442,6 +581,7 @@ Only add complexity with:
 - `tasks.md` - Implementation steps
 - `design.md` - Technical decisions
 - `spec.md` - Requirements and behavior
+- `worklog.md` - Session summaries (when using hooks)
 
 ### CLI Essentials
 ```bash
