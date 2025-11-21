@@ -63,7 +63,34 @@ export interface TodoDiff {
 // Constants
 // ============================================================================
 
-const PROJECT_ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+/**
+ * Find the project root directory
+ * Priority: CLAUDE_PROJECT_DIR env var > git root > current working directory
+ */
+function findProjectRoot(): string {
+  // First priority: CLAUDE_PROJECT_DIR environment variable set by Claude Code
+  if (process.env.CLAUDE_PROJECT_DIR) {
+    return process.env.CLAUDE_PROJECT_DIR;
+  }
+
+  // Second priority: Find git root from current working directory
+  try {
+    const gitRoot = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: process.cwd(),
+    }).trim();
+
+    // On Windows, git returns forward slashes, normalize to backslashes
+    return gitRoot.replace(/\//g, path.sep);
+  } catch (error) {
+    // Last resort: use current working directory
+    // This may fail if hooks are run from wrong directory
+    return process.cwd();
+  }
+}
+
+const PROJECT_ROOT = findProjectRoot();
 const STATE_FILE = path.join(PROJECT_ROOT, 'openspec', 'state', 'openspec-state.json');
 const CHANGES_DIR = path.join(PROJECT_ROOT, 'openspec', 'changes');
 
@@ -80,10 +107,14 @@ export async function loadState(): Promise<OpenSpecState> {
     return JSON.parse(content);
   } catch (error: any) {
     if (error.code === 'ENOENT') {
-      // Return default state if file doesn't exist
+      // State file doesn't exist, return default
+      console.error(`[OpenSpec] State file not found at: ${STATE_FILE}`);
       return getDefaultState();
     }
-    throw new Error(`Failed to load state: ${error.message}`);
+    // Log error for debugging
+    console.error(`[OpenSpec] Failed to load state from ${STATE_FILE}: ${error.message}`);
+    console.error(`[OpenSpec] PROJECT_ROOT: ${PROJECT_ROOT}`);
+    return getDefaultState();
   }
 }
 
@@ -183,12 +214,26 @@ function execGit(command: string): string {
 
 /**
  * Get current git branch name
+ * Handles both repos with commits and repos without commits (no HEAD yet)
  */
 export function getCurrentBranch(): string {
   try {
+    // Try standard method first (works for repos with commits)
     return execGit('rev-parse --abbrev-ref HEAD');
-  } catch {
-    return 'unknown';
+  } catch (error: any) {
+    // If that fails, try symbolic-ref (works for repos without commits)
+    try {
+      return execGit('symbolic-ref --short HEAD');
+    } catch (fallbackError: any) {
+      // Log both errors for debugging
+      console.error(`[OpenSpec] Failed to get current branch`);
+      console.error(`[OpenSpec] First attempt: ${error.message}`);
+      console.error(`[OpenSpec] Fallback attempt: ${fallbackError.message}`);
+      console.error(`[OpenSpec] PROJECT_ROOT: ${PROJECT_ROOT}`);
+      console.error(`[OpenSpec] cwd: ${process.cwd()}`);
+      console.error(`[OpenSpec] CLAUDE_PROJECT_DIR: ${process.env.CLAUDE_PROJECT_DIR || 'not set'}`);
+      return 'unknown';
+    }
   }
 }
 
