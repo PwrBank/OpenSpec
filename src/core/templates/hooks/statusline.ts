@@ -11,6 +11,35 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+
+// ============================================================================
+// Types for Claude Code stdin data
+// ============================================================================
+
+interface ClaudeCodeInput {
+  cwd?: string;
+  model?: {
+    display_name?: string;
+  };
+  session_id?: string;
+  transcript_path?: string;
+}
+
+interface UsageData {
+  input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens?: number;
+}
+
+interface TranscriptLine {
+  message?: {
+    usage?: UsageData;
+  };
+  timestamp?: string;
+  sessionId?: string;
+  isSidechain?: boolean;
+}
 import {
   loadState,
   getCurrentBranch,
@@ -70,12 +99,206 @@ const ICONS = {
 const ICON_SET = ICONS.emoji;
 
 // ============================================================================
+// Stdin Input Parsing
+// ============================================================================
+
+/**
+ * Read and parse JSON input from stdin (provided by Claude Code)
+ */
+function readStdinInput(): ClaudeCodeInput {
+  try {
+    const inputData = fs.readFileSync(0, 'utf-8');
+    return JSON.parse(inputData);
+  } catch {
+    return {};
+  }
+}
+
+// ============================================================================
+// Transcript Processing
+// ============================================================================
+
+/**
+ * Detect stale transcripts and find the current one by session ID
+ */
+function findCurrentTranscript(
+  transcriptPath: string | null | undefined,
+  sessionId: string | null | undefined,
+  staleThreshold: number = 30
+): string | null {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+    return transcriptPath || null;
+  }
+
+  try {
+    // Read last line of transcript to get last message timestamp
+    const lines = fs.readFileSync(transcriptPath, 'utf-8')
+      .split('\n')
+      .filter(line => line.trim());
+
+    if (!lines.length) {
+      return transcriptPath;
+    }
+
+    const lastLine = lines[lines.length - 1];
+    const lastMsg: TranscriptLine = JSON.parse(lastLine);
+    const lastTimestamp = lastMsg.timestamp;
+
+    if (!lastTimestamp) {
+      return transcriptPath;
+    }
+
+    // Parse ISO timestamp and compare to current time
+    const lastTime = new Date(lastTimestamp);
+    const currentTime = new Date();
+    const ageSeconds = (currentTime.getTime() - lastTime.getTime()) / 1000;
+
+    // If transcript is fresh, return it
+    if (ageSeconds <= staleThreshold) {
+      return transcriptPath;
+    }
+
+    // Transcript is stale - search for current one
+    const transcriptDir = path.dirname(transcriptPath);
+    const allFiles = fs.readdirSync(transcriptDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => path.join(transcriptDir, f))
+      .sort((a, b) => fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime())
+      .slice(0, 5);  // Top 5 most recent
+
+    // Check each transcript for matching session ID
+    for (const candidate of allFiles) {
+      try {
+        const candidateLines = fs.readFileSync(candidate, 'utf-8')
+          .split('\n')
+          .filter(line => line.trim());
+
+        if (!candidateLines.length) {
+          continue;
+        }
+
+        // Check last line for session ID
+        const candidateLast: TranscriptLine = JSON.parse(candidateLines[candidateLines.length - 1]);
+        const candidateSessionId = candidateLast.sessionId;
+
+        if (candidateSessionId === sessionId) {
+          // Verify this transcript is fresh
+          const candidateTimestamp = candidateLast.timestamp;
+          if (candidateTimestamp) {
+            const candidateTime = new Date(candidateTimestamp);
+            const candidateAge = (currentTime.getTime() - candidateTime.getTime()) / 1000;
+
+            if (candidateAge <= staleThreshold) {
+              return candidate;
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    // No fresh transcript found, return original
+    return transcriptPath;
+  } catch {
+    // Any error, return original path
+    return transcriptPath;
+  }
+}
+
+/**
+ * Parse transcript file and extract context usage data
+ */
+function parseTranscriptForContext(transcriptPath: string | null): number | null {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+    return null;
+  }
+
+  try {
+    const lines = fs.readFileSync(transcriptPath, 'utf-8').split('\n');
+    let mostRecentUsage: UsageData | null = null;
+    let mostRecentTimestamp: string | null = null;
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const lineData: TranscriptLine = JSON.parse(line);
+
+        // Skip sidechain entries (subagent calls)
+        if (lineData.isSidechain) continue;
+
+        // Check for usage data in main-chain messages
+        if (lineData.message?.usage) {
+          const timestamp = lineData.timestamp;
+          if (timestamp && (!mostRecentTimestamp || timestamp > mostRecentTimestamp)) {
+            mostRecentTimestamp = timestamp;
+            mostRecentUsage = lineData.message.usage;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    // Calculate context length (input + cache tokens only, NOT output)
+    if (mostRecentUsage) {
+      return (mostRecentUsage.input_tokens || 0) +
+             (mostRecentUsage.cache_read_input_tokens || 0) +
+             (mostRecentUsage.cache_creation_input_tokens || 0);
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Determine context limit based on model name
+ */
+function getContextLimit(modelName: string): number {
+  const lowerName = modelName.toLowerCase();
+
+  // Check for 1M context models
+  if (lowerName.includes('[1m]') || lowerName.includes('1m') || lowerName.includes('1000k')) {
+    return 800000;
+  }
+
+  // Default to standard context limit
+  return 160000;
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
 async function main(): Promise<void> {
   try {
-    const statusLine = await buildStatusLine();
+    // Read input from Claude Code via stdin
+    const input = readStdinInput();
+    const modelName = input.model?.display_name || 'unknown';
+    const sessionId = input.session_id || null;
+    const transcriptPath = input.transcript_path || null;
+
+    // Determine context limit based on model
+    const contextLimit = getContextLimit(modelName);
+
+    // Find current transcript (handling stale transcripts)
+    const currentTranscriptPath = findCurrentTranscript(transcriptPath, sessionId);
+
+    // Parse context usage from transcript
+    let contextLength: number | null = null;
+    if (currentTranscriptPath) {
+      contextLength = parseTranscriptForContext(currentTranscriptPath);
+
+      // Ignore suspiciously low context values (likely initial/empty sessions)
+      if (contextLength && contextLength < 17000) {
+        contextLength = null;
+      }
+    }
+
+    const statusLine = await buildStatusLine(contextLength, contextLimit);
     process.stdout.write(statusLine);
   } catch (error: any) {
     console.error(`[Statusline] Error: ${error.message}`);
@@ -90,13 +313,16 @@ async function main(): Promise<void> {
 /**
  * Build the complete two-line status display
  */
-async function buildStatusLine(): Promise<string> {
+async function buildStatusLine(
+  contextLength: number | null,
+  contextLimit: number
+): Promise<string> {
   const state = await loadState();
   const currentBranch = getCurrentBranch();
   const activeChange = findActiveChangeForBranch(state, currentBranch);
 
   // Line 1: Change state | Context usage
-  const line1 = await buildLine1(activeChange);
+  const line1 = await buildLine1(activeChange, contextLength, contextLimit);
 
   // Line 2: Mode | Edited files | Open changes | Git branch
   const line2 = await buildLine2(activeChange, currentBranch, state);
@@ -107,9 +333,13 @@ async function buildStatusLine(): Promise<string> {
 /**
  * Build Line 1: Change state | Context usage bar
  */
-async function buildLine1(activeChange: any): Promise<string> {
+async function buildLine1(
+  activeChange: any,
+  contextLength: number | null,
+  contextLimit: number
+): Promise<string> {
   const changeInfo = buildChangeInfo(activeChange);
-  const contextBar = buildContextBar();
+  const contextBar = buildContextBar(contextLength, contextLimit);
 
   // Right-align context bar (assume 80 char width)
   const totalWidth = 80;
@@ -194,13 +424,13 @@ function buildChangeInfo(activeChange: any): string {
 }
 
 /**
- * Build context usage bar (mock - would need actual context data)
+ * Build context usage bar with real data from transcript
  */
-function buildContextBar(): string {
-  // Mock context data (would need to read from transcript or Claude API)
-  const contextUsed = 0;
-  const contextTotal = 200000;
-  const percentage = 0;
+function buildContextBar(contextLength: number | null, contextLimit: number): string {
+  // Use real context data from transcript parsing
+  const contextUsed = contextLength || 0;
+  const contextTotal = contextLimit;
+  const percentage = contextUsed > 0 ? (contextUsed / contextTotal) * 100 : 0;
 
   // Color based on percentage
   let color = COLORS.green;

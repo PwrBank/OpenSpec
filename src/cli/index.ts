@@ -75,12 +75,17 @@ program
 
 program
   .command('update [path]')
-  .description('Update OpenSpec instruction files')
-  .action(async (targetPath = '.') => {
+  .description('Update OpenSpec instruction files and hooks')
+  .option('-y, --yes', 'Skip confirmation prompts and update all files')
+  .option('--dry-run', 'Show what would be updated without making changes')
+  .action(async (targetPath = '.', options?: { yes?: boolean; dryRun?: boolean }) => {
     try {
       const resolvedPath = path.resolve(targetPath);
       const updateCommand = new UpdateCommand();
-      await updateCommand.execute(resolvedPath);
+      await updateCommand.execute(resolvedPath, {
+        skipConfirmation: options?.yes || false,
+        dryRun: options?.dryRun || false,
+      });
     } catch (error) {
       console.log(); // Empty line for spacing
       ora().fail(`Error: ${(error as Error).message}`);
