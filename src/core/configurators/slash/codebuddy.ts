@@ -1,13 +1,13 @@
 import { SlashCommandConfigurator } from './base.js';
 import { SlashCommandId } from '../../templates/index.js';
 
-const FILE_PATHS: Record<SlashCommandId, string> = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: '.codebuddy/commands/openspec/proposal.md',
   apply: '.codebuddy/commands/openspec/apply.md',
   archive: '.codebuddy/commands/openspec/archive.md'
 };
 
-const FRONTMATTER: Record<SlashCommandId, string> = {
+const FRONTMATTER: Partial<Record<SlashCommandId, string>> = {
   proposal: `---
 name: OpenSpec: Proposal
 description: Scaffold a new OpenSpec change and validate strictly.
@@ -32,11 +32,11 @@ export class CodeBuddySlashCommandConfigurator extends SlashCommandConfigurator 
   readonly toolId = 'codebuddy';
   readonly isAvailable = true;
 
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
-  protected getFrontmatter(id: SlashCommandId): string {
+  protected getFrontmatter(id: SlashCommandId): string | undefined {
     return FRONTMATTER[id];
   }
 }

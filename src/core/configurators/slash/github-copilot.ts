@@ -1,13 +1,13 @@
 import { SlashCommandConfigurator } from './base.js';
 import { SlashCommandId } from '../../templates/index.js';
 
-const FILE_PATHS: Record<SlashCommandId, string> = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: '.github/prompts/openspec-proposal.prompt.md',
   apply: '.github/prompts/openspec-apply.prompt.md',
   archive: '.github/prompts/openspec-archive.prompt.md'
 };
 
-const FRONTMATTER: Record<SlashCommandId, string> = {
+const FRONTMATTER: Partial<Record<SlashCommandId, string>> = {
   proposal: `---
 description: Scaffold a new OpenSpec change and validate strictly.
 ---
@@ -29,11 +29,11 @@ export class GitHubCopilotSlashCommandConfigurator extends SlashCommandConfigura
   readonly toolId = 'github-copilot';
   readonly isAvailable = true;
 
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
-  protected getFrontmatter(id: SlashCommandId): string {
+  protected getFrontmatter(id: SlashCommandId): string | undefined {
     return FRONTMATTER[id];
   }
 }

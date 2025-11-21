@@ -24,6 +24,7 @@ import {
   OPENSPEC_MARKERS,
 } from './config.js';
 import { PALETTE } from './styles/palette.js';
+import { setupClaudeHooks } from '../cli/setup-claude-hooks.js';
 
 const PROGRESS_SPINNER = {
   interval: 80,
@@ -414,6 +415,14 @@ export class InitCommand {
       (tool) => !selectedIds.has(tool.value) && !existingToolStates[tool.value]
     );
 
+    // Check if Claude Code was selected and prompt for hooks
+    const claudeSelected = selectedIds.has('claude');
+    let claudeHooksConfig: { install: boolean; statusline: boolean } | null = null;
+
+    if (claudeSelected && !extendMode) {
+      claudeHooksConfig = await this.promptClaudeHooksSetup();
+    }
+
     // Step 1: Create directory structure
     if (!extendMode) {
       const structureSpinner = this.startSpinner(
@@ -437,11 +446,28 @@ export class InitCommand {
 
     // Step 2: Configure AI tools
     const toolSpinner = this.startSpinner('Configuring AI tools...');
+
+    // Filter out Claude if it was selected (slash commands handled by setupClaudeHooks)
+    // When hooks are installed, setupClaudeHooks creates slash commands
+    // When hooks are not installed, we don't create slash commands at all
+    const toolsToConfiguration = claudeSelected
+      ? config.aiTools.filter(id => id !== 'claude')
+      : config.aiTools;
+
     const rootStubStatus = await this.configureAITools(
       projectPath,
       openspecDir,
-      config.aiTools
+      toolsToConfiguration
     );
+
+    // Configure Claude hooks if selected
+    if (claudeSelected && claudeHooksConfig?.install) {
+      await setupClaudeHooks({
+        includeStatusline: claudeHooksConfig.statusline,
+        projectRoot: projectPath,
+      });
+    }
+
     toolSpinner.stopAndPersist({
       symbol: PALETTE.white('▌'),
       text: PALETTE.white('AI tools configured'),
@@ -455,7 +481,8 @@ export class InitCommand {
       skippedExisting,
       skipped,
       extendMode,
-      rootStubStatus
+      rootStubStatus,
+      claudeHooksConfig
     );
   }
 
@@ -478,6 +505,84 @@ export class InitCommand {
   ): Promise<OpenSpecConfig> {
     const selectedTools = await this.getSelectedTools(existingTools, extendMode);
     return { aiTools: selectedTools };
+  }
+
+  private async promptClaudeHooksSetup(): Promise<{
+    install: boolean;
+    statusline: boolean;
+  }> {
+    // Prompt for hook installation
+    const installHooks = await this.prompt({
+      extendMode: false,
+      baseMessage: 'Install Claude Code approval hooks for safety?',
+      choices: [
+        {
+          kind: 'info',
+          value: '__info__',
+          label: {
+            primary:
+              'Hooks prevent Claude from making changes without approval keywords.',
+          },
+          selectable: false,
+        },
+        {
+          kind: 'option',
+          value: 'yes',
+          label: { primary: 'Yes, install approval hooks' },
+          configured: false,
+          selectable: true,
+        },
+        {
+          kind: 'option',
+          value: 'no',
+          label: { primary: 'No, skip hooks' },
+          configured: false,
+          selectable: true,
+        },
+      ],
+      initialSelected: ['yes'],
+    });
+
+    if (!installHooks.includes('yes')) {
+      return { install: false, statusline: false };
+    }
+
+    // Prompt for statusline
+    const installStatusline = await this.prompt({
+      extendMode: false,
+      baseMessage: 'Install custom Claude Code statusline?',
+      choices: [
+        {
+          kind: 'info',
+          value: '__info__',
+          label: {
+            primary:
+              'Shows OpenSpec mode, proposal, and todo progress in status bar.',
+          },
+          selectable: false,
+        },
+        {
+          kind: 'option',
+          value: 'yes',
+          label: { primary: 'Yes, install statusline' },
+          configured: false,
+          selectable: true,
+        },
+        {
+          kind: 'option',
+          value: 'no',
+          label: { primary: 'No, use default' },
+          configured: false,
+          selectable: true,
+        },
+      ],
+      initialSelected: ['yes'],
+    });
+
+    return {
+      install: true,
+      statusline: installStatusline.includes('yes'),
+    };
   }
 
   private async getSelectedTools(
@@ -809,7 +914,8 @@ export class InitCommand {
     skippedExisting: AIToolOption[],
     skipped: AIToolOption[],
     extendMode: boolean,
-    rootStubStatus: RootStubStatus
+    rootStubStatus: RootStubStatus,
+    claudeHooksConfig: { install: boolean; statusline: boolean } | null
   ): void {
     console.log(); // Empty line for spacing
     const successHeadline = extendMode
@@ -861,6 +967,20 @@ export class InitCommand {
         'Use `openspec update` to refresh shared OpenSpec instructions in the future.'
       )
     );
+
+    // Display Claude hooks information if installed
+    if (claudeHooksConfig?.install) {
+      console.log();
+      console.log(PALETTE.white('Claude Code Approval Hooks Installed'));
+      console.log(PALETTE.midGray('  Workflow keywords:'));
+      console.log(PALETTE.midGray('    propose: [description] - Create new proposal'));
+      console.log(PALETTE.midGray('    apply: [proposal-id]   - Start implementation'));
+      console.log(PALETTE.midGray('    pause:                 - Checkpoint progress'));
+      console.log(PALETTE.midGray('    archive                - Complete and merge'));
+      if (claudeHooksConfig.statusline) {
+        console.log(PALETTE.midGray('  Custom statusline enabled'));
+      }
+    }
 
     // Get the selected tool name(s) for display
     const toolName = this.formatToolNames(selectedTools);

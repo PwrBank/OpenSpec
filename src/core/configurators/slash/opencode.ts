@@ -3,13 +3,13 @@ import { SlashCommandId } from "../../templates/index.js";
 import { FileSystemUtils } from "../../../utils/file-system.js";
 import { OPENSPEC_MARKERS } from "../../config.js";
 
-const FILE_PATHS: Record<SlashCommandId, string> = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: ".opencode/command/openspec-proposal.md",
   apply: ".opencode/command/openspec-apply.md",
   archive: ".opencode/command/openspec-archive.md",
 };
 
-const FRONTMATTER: Record<SlashCommandId, string> = {
+const FRONTMATTER: Partial<Record<SlashCommandId, string>> = {
   proposal: `---
 agent: build
 description: Scaffold a new OpenSpec change and validate strictly.
@@ -42,7 +42,7 @@ export class OpenCodeSlashCommandConfigurator extends SlashCommandConfigurator {
   readonly toolId = "opencode";
   readonly isAvailable = true;
 
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
@@ -59,14 +59,19 @@ export class OpenCodeSlashCommandConfigurator extends SlashCommandConfigurator {
   async updateExisting(projectPath: string, _openspecDir: string): Promise<string[]> {
     const updated = await super.updateExisting(projectPath, _openspecDir);
     const rewroteArchive = await this.rewriteArchiveFile(projectPath);
-    if (rewroteArchive && !updated.includes(FILE_PATHS.archive)) {
-      updated.push(FILE_PATHS.archive);
+    const archiveFile = FILE_PATHS.archive;
+    if (rewroteArchive && archiveFile && !updated.includes(archiveFile)) {
+      updated.push(archiveFile);
     }
     return updated;
   }
 
   private async rewriteArchiveFile(projectPath: string): Promise<boolean> {
-    const archivePath = FileSystemUtils.joinPath(projectPath, FILE_PATHS.archive);
+    const archiveFile = FILE_PATHS.archive;
+    if (!archiveFile) {
+      return false;
+    }
+    const archivePath = FileSystemUtils.joinPath(projectPath, archiveFile);
     if (!await FileSystemUtils.fileExists(archivePath)) {
       return false;
     }

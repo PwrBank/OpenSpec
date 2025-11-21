@@ -9,7 +9,7 @@ export abstract class TomlSlashCommandConfigurator extends SlashCommandConfigura
     return undefined;
   }
 
-  protected abstract getDescription(id: SlashCommandId): string;
+  protected abstract getDescription(id: SlashCommandId): string | undefined;
 
   // Override to generate TOML format with markers inside the prompt field
   async generateAll(projectPath: string, _openspecDir: string): Promise<string[]> {
@@ -33,7 +33,7 @@ export abstract class TomlSlashCommandConfigurator extends SlashCommandConfigura
   }
 
   private generateTOML(id: SlashCommandId, body: string): string {
-    const description = this.getDescription(id);
+    const description = this.getDescription(id) || 'OpenSpec command';
 
     // TOML format with triple-quoted string for multi-line prompt
     // Markers are inside the prompt value

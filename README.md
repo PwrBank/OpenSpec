@@ -90,7 +90,7 @@ These tools have built-in OpenSpec commands. Select the OpenSpec integration whe
 
 | Tool | Commands |
 |------|----------|
-| **Claude Code** | `/openspec:proposal`, `/openspec:apply`, `/openspec:archive` |
+| **Claude Code** | `/openspec:proposal`, `/openspec:apply`, `/openspec:archive`, `/openspec:pause` * |
 | **CodeBuddy Code (CLI)** | `/openspec:proposal`, `/openspec:apply`, `/openspec:archive` (`.codebuddy/commands/`) — see [docs](https://www.codebuddy.ai/cli) |
 | **CoStrict** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.cospec/openspec/commands/`) — see [docs](https://costrict.ai)|
 | **Cursor** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` |
@@ -110,6 +110,7 @@ These tools have built-in OpenSpec commands. Select the OpenSpec integration whe
 | **Auggie (Augment CLI)** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.augment/commands/`) |
 | **Qwen Code** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.qwen/commands/`) |
 
+\* `/openspec:pause` is exclusively available when Claude Code approval hooks are installed. See [Claude Code Approval Hooks](#claude-code-approval-hooks-optional) section below.
 
 Kilo Code discovers team workflows automatically. Save the generated files under `.kilocode/workflows/` and trigger them from the command palette with `/openspec-proposal.md`, `/openspec-apply.md`, or `/openspec-archive.md`.
 
@@ -158,6 +159,43 @@ openspec init
 - Run `openspec list` to verify the setup and view any active changes
 - If your coding assistant doesn't surface the new slash commands right away, restart it. Slash commands are loaded at startup,
   so a fresh launch ensures they appear
+
+#### Claude Code Approval Hooks (Optional)
+
+If you selected **Claude Code** during initialization, you may have been prompted to install approval hooks. These hooks provide workflow safety and context preservation:
+
+**What hooks do:**
+- **Prevent scope creep**: Block TodoWrite changes that deviate from the approved plan in `tasks.md`
+- **Keyword-driven workflow**: Use `propose:`, `apply:`, `pause:`, and `archive` keywords to control the workflow
+- **Context preservation**: `pause:` generates worklog entries to preserve session context across token limits
+- **Pre-archive review**: Automatically run code review, documentation review, and worklog generation before archiving
+
+**Workflow keywords:**
+```text
+propose: [description]  # Create a new change proposal
+apply: [change-id]      # Start implementing a change (creates feature branch)
+pause: [note]           # Checkpoint progress and preserve context
+archive                 # Complete change (runs reviews, merges branch)
+archive --skip-review   # Skip pre-archive reviews
+```
+
+**Example workflow with hooks:**
+```text
+You: propose: add user authentication with JWT
+AI:  Creates openspec/changes/add-user-authentication/ with proposal and tasks
+
+You: apply: add-user-authentication
+Hook: Creates feature/add-user-authentication branch, locks approved plan
+AI:  Begins implementation following tasks.md
+
+You: pause: switching tasks
+Hook: Generates worklog entry preserving session context
+
+You: archive
+Hook: Runs code review → documentation review → shows findings → merges if approved
+```
+
+Hooks are configured in `.claude/settings.json` (gitignored). A `.claude/settings.json.example` is committed for team reference. See [HOOKS.md](HOOKS.md) for detailed behavior.
 
 ### Optional: Populate Project Context
 
