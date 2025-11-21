@@ -109,6 +109,7 @@ These tools have built-in OpenSpec commands. Select the OpenSpec integration whe
 | **Amazon Q Developer** | `@openspec-proposal`, `@openspec-apply`, `@openspec-archive` (`.amazonq/prompts/`) |
 | **Auggie (Augment CLI)** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.augment/commands/`) |
 | **Qwen Code** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.qwen/commands/`) |
+| **iFlow (iflow-cli)** | `/openspec-proposal`, `/openspec-apply`, `/openspec-archive` (`.iflow/commands/`) |
 
 \* `/openspec:pause` is exclusively available when Claude Code approval hooks are installed. See [Claude Code Approval Hooks](#claude-code-approval-hooks-optional) section below.
 
