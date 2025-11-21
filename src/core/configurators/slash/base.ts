@@ -8,18 +8,20 @@ export interface SlashCommandTarget {
   kind: 'slash';
 }
 
-const ALL_COMMANDS: SlashCommandId[] = ['proposal', 'apply', 'archive'];
+const ALL_COMMANDS: SlashCommandId[] = ['proposal', 'apply', 'archive', 'pause'];
 
 export abstract class SlashCommandConfigurator {
   abstract readonly toolId: string;
   abstract readonly isAvailable: boolean;
 
   getTargets(): SlashCommandTarget[] {
-    return ALL_COMMANDS.map((id) => ({
-      id,
-      path: this.getRelativePath(id),
-      kind: 'slash'
-    }));
+    return ALL_COMMANDS
+      .map((id) => {
+        const path = this.getRelativePath(id);
+        if (!path) return null; // Skip if command not implemented
+        return { id, path, kind: 'slash' as const };
+      })
+      .filter((target): target is SlashCommandTarget => target !== null);
   }
 
   async generateAll(projectPath: string, _openspecDir: string): Promise<string[]> {
@@ -63,7 +65,7 @@ export abstract class SlashCommandConfigurator {
     return updated;
   }
 
-  protected abstract getRelativePath(id: SlashCommandId): string;
+  protected abstract getRelativePath(id: SlashCommandId): string | undefined;
   protected abstract getFrontmatter(id: SlashCommandId): string | undefined;
 
   protected getBody(id: SlashCommandId): string {
@@ -74,6 +76,9 @@ export abstract class SlashCommandConfigurator {
   // to redirect to tool-specific locations (e.g., global directories).
   resolveAbsolutePath(projectPath: string, id: SlashCommandId): string {
     const rel = this.getRelativePath(id);
+    if (!rel) {
+      throw new Error(`Slash command '${id}' is not available for tool '${this.toolId}'`);
+    }
     return FileSystemUtils.joinPath(projectPath, rel);
   }
 

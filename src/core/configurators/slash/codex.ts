@@ -6,7 +6,7 @@ import { FileSystemUtils } from "../../../utils/file-system.js";
 import { OPENSPEC_MARKERS } from "../../config.js";
 
 // Use POSIX-style paths for consistent logging across platforms.
-const FILE_PATHS: Record<SlashCommandId, string> = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: ".codex/prompts/openspec-proposal.md",
   apply: ".codex/prompts/openspec-apply.md",
   archive: ".codex/prompts/openspec-archive.md",
@@ -16,14 +16,14 @@ export class CodexSlashCommandConfigurator extends SlashCommandConfigurator {
   readonly toolId = "codex";
   readonly isAvailable = true;
 
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
   protected getFrontmatter(id: SlashCommandId): string | undefined {
     // Codex supports YAML frontmatter with description and argument-hint fields,
     // plus $ARGUMENTS to capture all arguments as a single string.
-    const frontmatter: Record<SlashCommandId, string> = {
+    const frontmatter: Partial<Record<SlashCommandId, string>> = {
       proposal: `---
 description: Scaffold a new OpenSpec change and validate strictly.
 argument-hint: request or feature description
@@ -119,8 +119,12 @@ $ARGUMENTS`,
 
   // Resolve to the global prompts location for configuration detection
   resolveAbsolutePath(_projectPath: string, id: SlashCommandId): string {
+    const filePath = FILE_PATHS[id];
+    if (!filePath) {
+      throw new Error(`Slash command '${id}' is not available for tool '${this.toolId}'`);
+    }
     const promptsDir = this.getGlobalPromptsDir();
-    const fileName = path.basename(FILE_PATHS[id]);
+    const fileName = path.basename(filePath);
     return FileSystemUtils.joinPath(promptsDir, fileName);
   }
 }

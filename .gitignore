@@ -145,8 +145,15 @@ docs/
 
 # Claude
 .claude/
+!.claude/settings.json.example
 CLAUDE.md
 .DS_Store
 
+# OpenSpec state
+openspec/state/
+
 # Pnpm
 .pnpm-store/
+
+# npm lock file (project uses pnpm)
+package-lock.json

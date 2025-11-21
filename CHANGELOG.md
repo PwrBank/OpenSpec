@@ -17,6 +17,17 @@
 
 ### Minor Changes
 
+- Add Claude Code approval hooks integration (optional during `openspec init`)
+  - **DAIC workflow enforcement**: Discussion-Apply-Implement-Complete mode prevents scope creep
+  - **Keyword-driven workflow**: Use `propose:`, `apply:`, `pause:`, and `archive` keywords
+  - **Context preservation**: `pause:` generates worklog entries to preserve session context
+  - **Pre-archive review**: Automatic code review and documentation review before archiving
+  - **Custom statusline**: Shows mode, progress, and git state (optional)
+  - **New slash command**: `/openspec:pause` exclusively available when hooks are installed
+  - **Agent prompts**: code-review, documentation, and worklog-generator agents
+  - **State management**: Tracks active changes, approved todos, and workflow mode
+  - See [HOOKS.md](HOOKS.md) for detailed documentation
+
 - Add Antigravity slash command support so `openspec init` can generate `.agent/workflows/openspec-*.md` files with description-only frontmatter and `openspec update` refreshes existing workflows alongside Windsurf.
 
 ## 0.15.0

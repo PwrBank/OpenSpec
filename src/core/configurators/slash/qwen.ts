@@ -12,13 +12,13 @@ import { SlashCommandId } from '../../templates/index.js';
  * Mapping of slash command IDs to their corresponding file paths in .qwen/commands directory.
  * @type {Record<SlashCommandId, string>}
  */
-const FILE_PATHS: Record<SlashCommandId, string> = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: '.qwen/commands/openspec-proposal.toml',
   apply: '.qwen/commands/openspec-apply.toml',
   archive: '.qwen/commands/openspec-archive.toml'
 };
 
-const DESCRIPTIONS: Record<SlashCommandId, string> = {
+const DESCRIPTIONS: Partial<Record<SlashCommandId, string>> = {
   proposal: 'Scaffold a new OpenSpec change and validate strictly.',
   apply: 'Implement an approved OpenSpec change and keep tasks in sync.',
   archive: 'Archive a deployed OpenSpec change and update specs.'
@@ -45,11 +45,11 @@ export class QwenSlashCommandConfigurator extends TomlSlashCommandConfigurator {
    * @param {SlashCommandId} id - The slash command identifier
    * @returns {string} The relative path to the command file
    */
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
-  protected getDescription(id: SlashCommandId): string {
+  protected getDescription(id: SlashCommandId): string | undefined {
     return DESCRIPTIONS[id];
   }
 }

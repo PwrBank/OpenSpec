@@ -1,13 +1,13 @@
 import { SlashCommandConfigurator } from './base.js';
 import { SlashCommandId } from '../../templates/index.js';
 
-const FILE_PATHS = {
+const FILE_PATHS: Partial<Record<SlashCommandId, string>> = {
   proposal: '.cospec/openspec/commands/openspec-proposal.md',
   apply: '.cospec/openspec/commands/openspec-apply.md',
   archive: '.cospec/openspec/commands/openspec-archive.md',
-} as const satisfies Record<SlashCommandId, string>;
+};
 
-const FRONTMATTER = {
+const FRONTMATTER: Partial<Record<SlashCommandId, string>> = {
   proposal: `---
 description: "Scaffold a new OpenSpec change and validate strictly."
 argument-hint: feature description or request
@@ -20,13 +20,13 @@ argument-hint: change-id
 description: "Archive a deployed OpenSpec change and update specs."
 argument-hint: change-id
 ---`
-} as const satisfies Record<SlashCommandId, string>;
+};
 
 export class CostrictSlashCommandConfigurator extends SlashCommandConfigurator {
   readonly toolId = 'costrict';
   readonly isAvailable = true;
 
-  protected getRelativePath(id: SlashCommandId): string {
+  protected getRelativePath(id: SlashCommandId): string | undefined {
     return FILE_PATHS[id];
   }
 
