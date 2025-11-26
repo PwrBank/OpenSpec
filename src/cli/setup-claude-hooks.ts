@@ -57,6 +57,7 @@ const __dirname = path.dirname(__filename);
 // Hook script names (compiled .js files in dist/templates/hooks/)
 const HOOK_SCRIPTS = [
   'shared-state.js',
+  'bash-analyzer.js',
   'openspec-enforce.js',
   'user-messages.js',
   'post-tool-use.js',

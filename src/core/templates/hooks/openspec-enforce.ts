@@ -25,6 +25,7 @@ import {
   ActiveChange,
   Task,
 } from './shared-state.js';
+import { isBashReadOnly } from './bash-analyzer.js';
 
 // ============================================================================
 // Type Definitions
@@ -46,11 +47,33 @@ interface HookResponse {
 // ============================================================================
 
 async function main(): Promise<void> {
+  const debugLogPath = path.join(
+    process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    'openspec',
+    'hooks',
+    'enforce-debug.log'
+  );
+
   try {
+    // Debug: Log environment to file
+    const fs = await import('fs/promises');
+    const timestamp = new Date().toISOString();
+    await fs.appendFile(debugLogPath, `\n\n=== ${timestamp} ===\n`);
+    await fs.appendFile(debugLogPath, `CLAUDE_PROJECT_DIR: ${process.env.CLAUDE_PROJECT_DIR || 'NOT SET'}\n`);
+    await fs.appendFile(debugLogPath, `cwd: ${process.cwd()}\n`);
+
+    console.error(`[OpenSpec Enforce] CLAUDE_PROJECT_DIR: ${process.env.CLAUDE_PROJECT_DIR || 'NOT SET'}`);
+    console.error(`[OpenSpec Enforce] cwd: ${process.cwd()}`);
+
     // Read tool use event from stdin
     const input = await readStdin();
+    await fs.appendFile(debugLogPath, `stdin input length: ${input.length}\n`);
+    await fs.appendFile(debugLogPath, `stdin input: ${input.substring(0, 200)}${input.length > 200 ? '...' : ''}\n`);
+
     if (!input) {
       // No input, allow by default
+      await fs.appendFile(debugLogPath, `No stdin input, allowing\n`);
+      console.error(`[OpenSpec Enforce] No stdin input, allowing`);
       outputResponse({ action: 'allow' });
       return;
     }
@@ -58,18 +81,25 @@ async function main(): Promise<void> {
     let event: ToolUseEvent;
     try {
       event = JSON.parse(input);
-    } catch {
+    } catch (e: any) {
       // Invalid JSON, allow by default
+      console.error(`[OpenSpec Enforce] Invalid JSON input: ${e.message}, allowing`);
       outputResponse({ action: 'allow' });
       return;
     }
 
     // Process the tool use event
     const response = await processToolUse(event);
+    await fs.appendFile(debugLogPath, `Final response: ${JSON.stringify(response)}\n`);
+    console.error(`[OpenSpec Enforce] Final response: ${JSON.stringify(response)}`);
     outputResponse(response);
   } catch (error: any) {
     // On error, allow but log the error
+    const fs = await import('fs/promises');
+    await fs.appendFile(debugLogPath, `ERROR: ${error.message}\n`);
+    await fs.appendFile(debugLogPath, `Stack: ${error.stack}\n`);
     console.error(`[OpenSpec Enforce] Error: ${error.message}`);
+    console.error(`[OpenSpec Enforce] Stack: ${error.stack}`);
     outputResponse({ action: 'allow' });
   }
 }
@@ -85,14 +115,35 @@ async function processToolUse(event: ToolUseEvent): Promise<HookResponse> {
   const tool = event.tool;
   const params = event.parameters;
 
+  const debugLogPath = path.join(
+    process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    'openspec',
+    'hooks',
+    'enforce-debug.log'
+  );
+  const fs = await import('fs/promises');
+
   // Load state and determine if we're in implementation mode
   const state = await loadState();
   const currentBranch = getCurrentBranch();
   const activeChange = findActiveChangeForBranch(state, currentBranch);
 
-  // If no active change, we're in discussion mode - allow everything
+  // Debug logging
+  await fs.appendFile(debugLogPath, `Tool: ${tool}\n`);
+  await fs.appendFile(debugLogPath, `Branch: ${currentBranch}\n`);
+  await fs.appendFile(debugLogPath, `Active changes count: ${state.active_changes.length}\n`);
+  await fs.appendFile(debugLogPath, `Active change for branch: ${activeChange ? activeChange.changeId : 'null'}\n`);
+
+  console.error(`[OpenSpec Enforce] Tool: ${tool}`);
+  console.error(`[OpenSpec Enforce] Branch: ${currentBranch}`);
+  console.error(`[OpenSpec Enforce] Active changes: ${state.active_changes.length}`);
+  console.error(`[OpenSpec Enforce] Active change for branch: ${activeChange ? activeChange.changeId : 'null'}`);
+
+  // If no active change, we're in discussion mode - enforce read-only restrictions
   if (!activeChange) {
-    return { action: 'allow' };
+    await fs.appendFile(debugLogPath, `No active change, enforcing discussion mode\n`);
+    console.error(`[OpenSpec Enforce] No active change, enforcing discussion mode`);
+    return await enforceDiscussionMode(tool, params);
   }
 
   // We have an active change - enforce rules based on tool type
@@ -110,6 +161,82 @@ async function processToolUse(event: ToolUseEvent): Promise<HookResponse> {
       // Unknown tool, allow by default
       return { action: 'allow' };
   }
+}
+
+// ============================================================================
+// Discussion Mode Enforcement
+// ============================================================================
+
+/**
+ * Enforce read-only restrictions in discussion mode (no active change)
+ * Blocks write tools and analyzes bash commands for write operations
+ */
+async function enforceDiscussionMode(tool: string, params: Record<string, any>): Promise<HookResponse> {
+  const debugLogPath = path.join(
+    process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    'openspec',
+    'hooks',
+    'enforce-debug.log'
+  );
+  const fs = await import('fs/promises');
+
+  await fs.appendFile(debugLogPath, `enforceDiscussionMode called with tool: ${tool}\n`);
+  console.error(`[OpenSpec Enforce] enforceDiscussionMode called with tool: ${tool}`);
+
+  // Block write tools in discussion mode
+  const writeTools = ['Write', 'Edit', 'MultiEdit', 'TodoWrite', 'NotebookEdit'];
+  await fs.appendFile(debugLogPath, `Write tools list: ${writeTools.join(', ')}\n`);
+  await fs.appendFile(debugLogPath, `Tool in write tools? ${writeTools.includes(tool)}\n`);
+
+  console.error(`[OpenSpec Enforce] Write tools list: ${writeTools.join(', ')}`);
+  console.error(`[OpenSpec Enforce] Tool in write tools? ${writeTools.includes(tool)}`);
+
+  if (writeTools.includes(tool)) {
+    await fs.appendFile(debugLogPath, `BLOCKING write tool: ${tool}\n`);
+    console.error(`[OpenSpec Enforce] BLOCKING write tool: ${tool}`);
+    return {
+      action: 'block',
+      message:
+        '[OpenSpec: Discussion Mode]\n' +
+        'File editing not allowed in discussion mode.\n' +
+        '\n' +
+        'To make changes:\n' +
+        '1. Create a proposal: "propose: <description>"\n' +
+        '2. Wait for approval\n' +
+        '3. Start implementation: "apply: <proposal-id>"',
+    };
+  }
+
+  // Analyze Bash commands for write operations
+  if (tool === 'Bash') {
+    const command = params.command as string;
+    if (!command) {
+      await fs.appendFile(debugLogPath, `Bash with no command, allowing\n`);
+      return { action: 'allow' };
+    }
+
+    if (!isBashReadOnly(command)) {
+      await fs.appendFile(debugLogPath, `BLOCKING write-like bash command: ${command}\n`);
+      return {
+        action: 'block',
+        message:
+          '[OpenSpec: Discussion Mode]\n' +
+          'Write-like bash commands not allowed in discussion mode.\n' +
+          '\n' +
+          `Blocked command: ${command}\n` +
+          '\n' +
+          'Only read-only operations are permitted.\n' +
+          'To make changes:\n' +
+          '1. Create a proposal: "propose: <description>"\n' +
+          '2. Wait for approval\n' +
+          '3. Start implementation: "apply: <proposal-id>"',
+      };
+    }
+  }
+
+  // Allow all other tools in discussion mode
+  await fs.appendFile(debugLogPath, `Allowing tool: ${tool} (not a write tool)\n`);
+  return { action: 'allow' };
 }
 
 // ============================================================================
@@ -166,7 +293,8 @@ async function enforceTodoWrite(
 }
 
 /**
- * Format TodoWrite violation message
+ * Format TodoWrite violation message with prescribed "SHAME RITUAL" response format
+ * Forces Claude to explain the violation and seek re-approval
  */
 function formatTodoWriteViolation(
   approved: Task[],
@@ -175,49 +303,64 @@ function formatTodoWriteViolation(
 ): string {
   const lines: string[] = [];
 
-  lines.push('⚠️  **BLOCKED - TodoWrite Scope Change Detected**');
+  lines.push('[OpenSpec: Todo Change Blocked]');
   lines.push('');
-  lines.push('You attempted to modify the approved plan. The scope of work was locked when you started implementation.');
+  lines.push('You just attempted to change the approved plan during implementation.');
   lines.push('');
-  lines.push('**Original Approved Plan** (`tasks.md` - ' + approved.length + ' tasks):');
+  lines.push('**Original Approved Plan** (' + approved.length + ' tasks):');
   approved.forEach((task, i) => {
-    const status = task.completed ? '✓' : ' ';
-    lines.push(`  ${i + 1}. [${status}] ${task.content}`);
-  });
-  lines.push('');
-  lines.push('**Attempted Change** (TodoWrite - ' + attempted.length + ' tasks):');
-  attempted.forEach((task, i) => {
-    const status = task.completed ? '✓' : ' ';
-    const marker = diff.added.some((t: Task) => t.content === task.content) ? ' ← NEW' : '';
-    lines.push(`  ${i + 1}. [${status}] ${task.content}${marker}`);
+    const status = task.completed ? '[x]' : '[ ]';
+    lines.push(`  ${i + 1}. ${status} ${task.content}`);
   });
   lines.push('');
 
+  lines.push('**Your Attempted Change** (' + attempted.length + ' tasks):');
+
+  // Show the changes with markers
   if (diff.added.length > 0) {
-    lines.push('**Unauthorized Additions:**');
+    lines.push('');
+    lines.push('**Added:**');
     diff.added.forEach((task: Task) => {
       lines.push(`  + ${task.content}`);
     });
-    lines.push('');
   }
 
   if (diff.removed.length > 0) {
-    lines.push('**Unauthorized Removals:**');
+    lines.push('');
+    lines.push('**Removed:**');
     diff.removed.forEach((task: Task) => {
       lines.push(`  - ${task.content}`);
     });
-    lines.push('');
   }
 
-  lines.push('**What you can do:**');
-  lines.push('  1. Continue with the original plan (recommended)');
-  lines.push('  2. Explain why the scope change is necessary and wait for user approval');
-  lines.push('  3. Ask the user to update `tasks.md` manually, then continue');
+  if (diff.modified.length > 0) {
+    lines.push('');
+    lines.push('**Modified:**');
+    diff.modified.forEach((mod: any) => {
+      const oldStatus = mod.old.completed ? '[x]' : '[ ]';
+      const newStatus = mod.new.completed ? '[x]' : '[ ]';
+      lines.push(`  ${oldStatus} → ${newStatus}: ${mod.new.content}`);
+    });
+  }
+
   lines.push('');
-  lines.push('Remember: Scope changes during implementation often indicate:');
-  lines.push('  - The original plan was incomplete (should have been caught during proposal)');
-  lines.push('  - You\'re over-engineering the solution (keep it simple)');
-  lines.push('  - You discovered a blocking issue (communicate this to the user)');
+  lines.push('═══════════════════════════════════════════════════════════');
+  lines.push('YOUR NEXT MESSAGE MUST use this exact format:');
+  lines.push('');
+  lines.push('[SHAME RITUAL]');
+  lines.push('I made a boo boo. I just tried to change the plan.');
+  lines.push('');
+  lines.push('The todos you approved were:');
+  lines.push('[List the original approved todos here]');
+  lines.push('');
+  lines.push('I tried to change them by [adding/removing/modifying] them:');
+  lines.push('[Show the changes - use + for added items, - for removed items, → for modifications]');
+  lines.push('');
+  lines.push('This [seems fine/is unimportant | was a violation of the execution boundary].');
+  lines.push('');
+  lines.push('If you approve of the change, you can let me cook by saying:');
+  lines.push('  "apply: <proposal-id>" (to start over with a new plan)');
+  lines.push('═══════════════════════════════════════════════════════════');
 
   return lines.join('\n');
 }
